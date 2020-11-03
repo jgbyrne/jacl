@@ -1,6 +1,56 @@
 from functools import partial
 from enum import Enum
 
+class JaclError(Exception):
+    def __init__(self, message):
+        self.message = message
+    
+    def __str__(self):
+        return self.message
+
+class Jacl:
+    @classmethod
+    def from_string(cls, string):
+        import sys
+
+        def log(lvl, message):
+            insight = ""
+            if message.position:
+                insight = "{:<4}| {}\n".format(message.lno, message.line)
+                insight += " " * (5 + message.col) + "^\n"
+            raise JaclError("[{}] {}\n{}{}".format(lvl, message.msg, insight, message.details))
+
+        info = partial(log, "INFO")
+        warn = partial(log, "WARN")
+        err  = partial(log, "ERROR")
+
+        jr = JaclReader("string", info, warn, err)
+        return jr.read(string)
+
+    def __init__(self, obj):
+        assert isinstance(obj, JaclTable)
+        self._obj = obj
+
+    def __getattr__(self, name):
+        if name == "key":
+            return self._obj.key
+
+        if isinstance(self._obj, JaclObject):
+            val = self._obj.bindings.get(name)
+            if isinstance(val, JaclTable):
+                return Jacl(val)
+            else:
+                return val
+        else:
+            raise AttributeError
+
+    def __getitem__(self, key):
+        return Jacl(self._obj.entries.get(key))
+
+    def __iter__(self):
+        for entry in self._obj.entries.values():
+            yield Jacl(entry)
+
 # position is a 3-tuple (lno, col, line)
 class Message:
     def __init__(self, msg, details, position = None):
@@ -51,6 +101,7 @@ class JaclReader:
 
     def read(self, buf):
         parse(self, None, buf)
+        return Jacl(self.doc)
 
 class Token:
     def __init__(self, tt, val, pos):
@@ -121,11 +172,11 @@ def tokenise(p, lno, line):
                         tbuf += c
                         state = 'f'
                     else:
-                        toks.append(TT.Integer.tok(int(tbuf), lno, ptr, line))
+                        toks.append(TT.Integer.tok(int(tbuf), lno, ptr+1, line))
                         tbuf = ""
                         state = '?'
                 else:
-                    toks.append(TT.Name.tok(tbuf, lno, ptr, line))
+                    toks.append(TT.Name.tok(tbuf, lno, ptr+1, line))
                     tbuf = ""
                     state = '?'
 
@@ -161,7 +212,12 @@ def tokenise(p, lno, line):
 
         elif state == 's':
             if c == '"':
-                toks.append(TT.String.tok(tbuf, lno, ptr+1, line))
+                if tbuf == "true":
+                    toks.append(TT.Boolean.tok(True, lno, ptr+1, line))
+                elif tbuf == "false":
+                    toks.append(TT.Boolean.tok(False, lno, ptr+1, line))
+                else:
+                    toks.append(TT.String.tok(tbuf, lno, ptr+1, line))
                 tbuf = ""
                 state = '?'
             elif c == '\\':
@@ -270,6 +326,8 @@ def val_or_key(p):
             return tuple(items)
         elif tok.tt == TT.Name:
             return Name(tok.val)
+        else:
+            p.err(Message("Expected Name or Tuple", "Found {}".format(tok.tt.name), tok.pos))
     else:
         p.err(Message("Unexpected End-of-File",
                       "Expected value or key"))
@@ -354,7 +412,11 @@ def stmt(p, scopes):
                     vals = rval(p, scopes)
 
                     for val, scope in zip(vals, scopes):
-                        for prop in props:    
+                        for prop in props:
+                            if prop == "key":
+                                p.err(Message("Invalid Property Name",
+                                              "'key' is a reserved name",
+                                              tok.pos))
                             scope.bindings[prop] = val
 
                     return
@@ -445,27 +507,3 @@ def parse(p, state, buf):
     if p.tok_peek() is not None:
         p.err(Message("Dangling Tokens", 
                       "Parsing concluded but tokens remained"))
-
-def main():
-    import sys
-
-    def log(lvl, message):
-        insight = ""
-        if message.position:
-            insight = "{:<4}| {}\n".format(message.lno, message.line)
-            insight += " " * (5 + message.col) + "^\n"
-        print("[{}] {}\n{}{}".format(lvl, message.msg, insight, message.details), file=sys.stderr)
-        sys.exit(1)
-
-    info = partial(log, "INFO")
-    warn = partial(log, "WARN")
-    err  = partial(log, "ERROR")
-
-    jr = JaclReader("stdin", info, warn, err)
-
-    jr.read(str(sys.stdin.read()))
-
-    print(jr.doc)
-
-if __name__ == "__main__":
-    main()
