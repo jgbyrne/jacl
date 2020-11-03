@@ -1,16 +1,57 @@
 from functools import partial
 from enum import Enum
 
-class State:
-    def __init__(self):
-        self.lno  = 1
-        self.col  = 1
+# position is a 3-tuple (lno, col, line)
+class Message:
+    def __init__(self, msg, details, position = None):
+        self.msg = msg
+        self.details = details
+        self.position = position
+        if self.position is not None:
+            assert len(self.position) == 3
+            self.lno = self.position[0]
+            self.col = self.position[1]
+            self.line = self.position[2]
 
-    def pos(self, line):
-        return (self.lno, self.col, line)
+class JaclReader:
+    def __init__(self, job, info, warn, err):
+        self.job  = job
 
+        self.info = info
+        self.warn = warn
+        self.err  = err
 
-    
+        self.toks = None
+        self.doc  = None
+
+    def tok_peek(self):
+        if not self.toks:
+            return None
+        return self.toks[0]
+
+    def tok_pop(self):
+        if not self.toks:
+            return None
+        return self.toks.pop(0)
+
+    def tok_expect(self, tt, err_msg, err_details):
+        if tok := self.tok_pop(): 
+            if tok.tt != tt:
+                msg = Message(err_msg, err_details, tok.pos)
+                self.err(msg)
+        else:
+            msg = Message(err_msg, err_details)
+            self.err(msg)
+
+        return True
+
+    def permit_break(self):
+        while (tok := self.tok_peek()) is not None and tok.tt == TT.Break:
+            self.tok_pop()
+
+    def read(self, buf):
+        parse(self, None, buf)
+
 class Token:
     def __init__(self, tt, val, pos):
         self.tt = tt
@@ -41,6 +82,7 @@ class TT(Enum):
     Dash     = 20
 
     Name     = 100
+    Break    = 1000
 
     def tok(self, val, lno, col, line):
         return Token(self, val, (lno, col, line))
@@ -56,6 +98,7 @@ symbols = {
     ',': TT.Comma,
     '+': TT.Cross,
     '-': TT.Dash,
+    ';': TT.Break,
 }
 
 def tokenise(p, lno, line):
@@ -130,40 +173,278 @@ def tokenise(p, lno, line):
             tbuf += c
             state = 's'
 
+    toks.append(TT.Break.tok(None, lno, ptr, line))
     return toks
+
+class JaclTable:
+    def __init__(self):
+        self.entries = {}
+
+    def recursive_repr(self, indent=0):
+        s = "    " * indent + "[" + "\n"
+        for key, entry in self.entries.items():
+            s += "    " * indent + "  [{}]".format(key) + "\n"
+            s += entry.recursive_repr(indent + 1)
+        s += "    " * indent + "]" + "\n\n"
+        return s
+
+    def __repr__(self):
+        return self.recursive_repr(0)
+
+
+class JaclObject(JaclTable):
+    def __init__(self, key):
+        super().__init__()
+        self.key = key
+        self.bindings = {}
+
+    def recursive_repr(self, indent=0):
+        s = "    " * indent + "{" + "\n"
+
+
+        for key, entry in self.entries.items():
+            s += "    " * indent + "  [{}]".format(key) + "\n"
+            s += entry.recursive_repr(indent + 1)
+
+        if self.entries and self.bindings:
+            s += "\n" + "    " * indent + "  ----" + "\n\n"
+
+        for name, value in self.bindings.items():
+            s += "    " * indent + "  {}:".format(name) + "\n"
+            if isinstance(value, JaclTable):
+                s += value.recursive_repr(indent + 1)
+            else:
+                s += "    " * (indent + 1) + repr(value) + "\n"
+        s += "    " * indent + "}" + "\n\n"
+        return s
+
+    def __repr__(self):
+        return self.recursive_repr(0)
+
+class Name:
+    def __init__(self, val):
+        self.val = val
+
+    def __repr__(self):
+         return "{}".format(self.val)
+
+def literal(p):
+    if tok := p.tok_pop():
+        if tok.tt in {TT.String, TT.Integer, TT.Float, TT.Boolean}:
+            return tok.val
+        else:
+            p.err(Message("Unexpected Value",
+                          "This value cannot go here", tok.pos))
+    else:
+        p.err(Message("Unexpected End-of-File",
+                      "Expected value but document ended abruptly"))
+
+def val_or_key(p):
+    if tok := p.tok_pop():
+        if tok.tt == TT.LParen:
+            p.permit_break()
+            items = []
+            while True:
+                if nxt := p.tok_peek():
+                    if nxt.tt == TT.RParen:
+                        p.tok_pop()
+                        break
+
+                    if nxt.tt in {TT.Name, TT.LParen}:
+                        items.append(val_or_key(p))
+                    else:
+                        items.append(literal(p))
+
+                if post := p.tok_peek():
+                    if post.tt == TT.RParen:
+                        p.tok_pop()
+                        break
+                    else:
+                        p.tok_expect(TT.Comma, "Could not parse tuple",
+                                               "Expected ','")
+                        p.permit_break()
+                else:
+                    p.err(Message("Unclosed Tuple",
+                                  "Expected ')' here",
+                                  tok.pos))
+            return tuple(items)
+        elif tok.tt == TT.Name:
+            return Name(tok.val)
+    else:
+        p.err(Message("Unexpected End-of-File",
+                      "Expected value or key"))
+
+def rval(p, scopes):
+    if tok := p.tok_peek():
+        if tok.tt == TT.LBrace:
+            children = []
+            child_keys = []
+            for scope in scopes:
+                child_key = "#anon" + str(len(scope.entries) + 1)
+                child = JaclObject(child_key)
+                scope.entries[child_key] = child
+                children.append(child)
+                child_keys.append(Name(child_key))
+            object_struct(p, children)
+            return child_keys 
+
+        if tok.tt == TT.LBrack:
+            return [table(p)] * len(scopes)
+
+        if tok.tt in {TT.Name, TT.LParen}:
+            vk = val_or_key(p)
+            if (nxt := p.tok_peek()) is not None:
+                if nxt.tt == TT.LBrace:
+                    if type(vk) is Name:
+                        keys = (vk.val,)
+                    else:
+                        if not all(type(k) is Name for k in vk):
+                            p.err(Message("Invalid type for key",
+                                          "Keys must be plain names",
+                                          tok.pos))
+                        keys = (k.val for k in vk)
+
+                        objs = []
+                        for scope in scopes:
+                            for key in keys:
+                                obj = scope.entries.get(key)
+                                if obj is None:
+                                    obj = JaclObject(key)
+                                    scope.entries[key] = obj
+                                objs.append(obj)
+                        object_struct(p, objs)
+            return [vk] * len(scopes)
+
+        return [literal(p)] * len(scopes)
+    else:
+       p.err(Message("Unexpected End-of-File", "Expected Value")) 
+
+
+def stmt(p, scopes):
+    if tok := p.tok_peek():
+        if tok.tt == TT.LBrace:
+            children = []
+            for scope in scopes:
+                child_key = "#anon" + str(len(scope.entries) + 1)
+                child = JaclObject(child_key)
+                scope.entries[child_key] = child
+                children.append(child)
+            object_struct(p, children)
+            return
+        else:
+            key = val_or_key(p)
+
+            if type(key) is Name:
+                keys = (key.val,)
+            else:
+                if not all(type(k) is Name for k in key):
+                    p.err(Message("Invalid type for key",
+                                  "Keys must be plain names",
+                                  tok.pos))
+                keys = (k.val for k in key)
+
+            if (nxt := p.tok_peek()) is not None:
+                if nxt.tt == TT.Equals:
+                    if not all(type(scope) is JaclObject for scope in scopes):
+                        p.err(Message("Binding in Table",
+                                      "Only Objects may contain bindings",
+                                      tok.pos))
+                    props = keys
+                    p.tok_pop()
+                    vals = rval(p, scopes)
+
+                    for val, scope in zip(vals, scopes):
+                        for prop in props:    
+                            scope.bindings[prop] = val
+
+                    return
+
+                elif nxt.tt == TT.LBrace:
+                    objs = []
+                    for scope in scopes:
+                        for key in keys:
+                            obj = scope.entries.get(key)
+                            if obj is None:
+                                obj = JaclObject(key)
+                                scope.entries[key] = obj
+                            objs.append(obj)
+                    object_struct(p, objs)
+                    return
+
+            for scope in scopes:
+                for key in keys:
+                    if key in scope.entries:
+                        p.warn(Message("Meaningless Object Redefinition",
+                                       "Redefining '{}' with no data achieves nothing".format(key),
+                                       tok.pos))
+                    else:
+                        obj = JaclObject(key)
+                        scope.entries[key] = obj
+    else:
+       p.err(Message("Unexpected End-of-File", "Expected Statement")) 
+
+def table(p):
+    p.tok_expect(TT.LBrack, "Could not parse Table",
+                            "Expected '['")
+
+    table = JaclTable()
+    
+    p.permit_break()
+    while (tok := p.tok_peek()) is not None:
+        if tok.tt == TT.RBrack:
+            break
         
+        stmt(p, (table,))
+        p.permit_break()
+
+    p.tok_expect(TT.RBrack, "Could not parse Table",
+                            "Expected ']'")
+    return table
+
+
+def object_inner(p, objs):
+    while True:
+        p.permit_break()
+
+        # End conditions for inner are EOF or '}'
+        # It is the parent's responsibility to check its condition
+        if p.tok_peek() is None:
+            return
+
+        if p.tok_peek().tt == TT.RBrace:
+            return
+        
+        stmt(p, objs)
+        p.permit_break()
+
+def object_struct(p, objs):
+    p.tok_expect(TT.LBrace, "Could not parse Object",
+                            "Expected '{'")
+
+    object_inner(p, objs)
+
+    p.tok_expect(TT.RBrace, "Could not parse Object",
+                            "Expected '}'")
+
+def document(p):
+    root = JaclObject("#root")
+    p.doc = root
+    object_inner(p, (root,))
 
 def parse(p, state, buf):
     toks = []
-    for lno, line in enumerate(buf.split("\n")):
-        if (ts := tokenise(p, lno, line)) is not False:
+    for i, line in enumerate(buf.split("\n")):
+        if (ts := tokenise(p, i+1, line)) is not False:
             toks += ts
         else:
             return False
+    
+    p.toks = toks
+    document(p)
 
-
-class JaclReader:
-    def __init__(self, job, info, warn, err):
-        self.job  = job
-
-        self.info = info
-        self.warn = warn
-        self.err  = err
-
-    def read(self, buf):
-        parse(self, None, buf)
-
-# position is a 3-tuple (lno, col, line)
-class Message:
-    def __init__(self, msg, details, position = None):
-        self.msg = msg
-        self.details = details
-        self.position = position
-        if self.position is not None:
-            assert len(self.position) == 3
-            self.lno = self.position[0]
-            self.col = self.position[1]
-            self.line = self.position[2]
+    if p.tok_peek() is not None:
+        p.err(Message("Dangling Tokens", 
+                      "Parsing concluded but tokens remained"))
 
 def main():
     import sys
@@ -174,6 +455,7 @@ def main():
             insight = "{:<4}| {}\n".format(message.lno, message.line)
             insight += " " * (5 + message.col) + "^\n"
         print("[{}] {}\n{}{}".format(lvl, message.msg, insight, message.details), file=sys.stderr)
+        sys.exit(1)
 
     info = partial(log, "INFO")
     warn = partial(log, "WARN")
@@ -183,6 +465,7 @@ def main():
 
     jr.read(str(sys.stdin.read()))
 
+    print(jr.doc)
 
 if __name__ == "__main__":
     main()

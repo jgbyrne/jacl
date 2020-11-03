@@ -5,35 +5,34 @@ title = "JACL Example"
 owner = {
     name = "Jack Byrne"
     dob  = "2000-07-11" # Non first-class dates unlike toml
-}
+};
 
 database = {
     server = "192.168.1.1"
     ports = (8000, 8001, 8002)
     connection_max = 5000
     enabled = true
-}
+};
 
 servers = [
     alpha {
         ip = "10.0.0.1"
-    }
+    };
 
     beta {
 	ip = "10.0.0.2"
-    }
+    };
 
-    alpha + beta {
+    (alpha, beta) {
         dc = "eqdc10"
-    }
-]
+    };
+];
 
 clients = {
     data = (("gamma", "delta"), (1, 2))
 
     hosts = (
-        "alpha"
-        "omega"
+        "alpha",
+        "omega",
     )
-}
-
+};
