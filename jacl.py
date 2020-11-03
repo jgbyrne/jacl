@@ -10,7 +10,12 @@ class JaclError(Exception):
 
 class Jacl:
     @classmethod
-    def from_string(cls, string):
+    def from_file(cls, path):
+        with open(path) as inf:
+            return cls.from_string(inf.read(), job_name=path)
+
+    @classmethod
+    def from_string(cls, string, job_name=None):
         import sys
 
         def log(lvl, message):
@@ -24,7 +29,7 @@ class Jacl:
         warn = partial(log, "WARN")
         err  = partial(log, "ERROR")
 
-        jr = JaclReader("string", info, warn, err)
+        jr = JaclReader(job_name if job_name else "string", info, warn, err)
         return jr.read(string)
 
     def __init__(self, obj):
@@ -39,13 +44,19 @@ class Jacl:
             val = self._obj.bindings.get(name)
             if isinstance(val, JaclTable):
                 return Jacl(val)
+            elif isinstance(val, Name):
+                return self[val.val]
             else:
                 return val
         else:
             raise AttributeError
 
     def __getitem__(self, key):
-        return Jacl(self._obj.entries.get(key))
+        if isinstance(key, Name):
+            key = key.val
+        if (entry := self._obj.entries.get(key)) is not None:
+            return Jacl(entry)
+        return None
 
     def __iter__(self):
         for entry in self._obj.entries.values():
@@ -176,7 +187,12 @@ def tokenise(p, lno, line):
                         tbuf = ""
                         state = '?'
                 else:
-                    toks.append(TT.Name.tok(tbuf, lno, ptr+1, line))
+                    if tbuf == "true":
+                        toks.append(TT.Boolean.tok(True, lno, ptr+1, line))
+                    elif tbuf == "false":
+                        toks.append(TT.Boolean.tok(False, lno, ptr+1, line))
+                    else:
+                        toks.append(TT.Name.tok(tbuf, lno, ptr+1, line))
                     tbuf = ""
                     state = '?'
 
@@ -212,12 +228,7 @@ def tokenise(p, lno, line):
 
         elif state == 's':
             if c == '"':
-                if tbuf == "true":
-                    toks.append(TT.Boolean.tok(True, lno, ptr+1, line))
-                elif tbuf == "false":
-                    toks.append(TT.Boolean.tok(False, lno, ptr+1, line))
-                else:
-                    toks.append(TT.String.tok(tbuf, lno, ptr+1, line))
+                toks.append(TT.String.tok(tbuf, lno, ptr+1, line))
                 tbuf = ""
                 state = '?'
             elif c == '\\':
