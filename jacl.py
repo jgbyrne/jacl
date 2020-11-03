@@ -302,7 +302,7 @@ def rval(p, scopes):
                             p.err(Message("Invalid type for key",
                                           "Keys must be plain names",
                                           tok.pos))
-                        keys = (k.val for k in vk)
+                        keys = [k.val for k in vk]
 
                         objs = []
                         for scope in scopes:
@@ -341,7 +341,7 @@ def stmt(p, scopes):
                     p.err(Message("Invalid type for key",
                                   "Keys must be plain names",
                                   tok.pos))
-                keys = (k.val for k in key)
+                keys = [k.val for k in key]
 
             if (nxt := p.tok_peek()) is not None:
                 if nxt.tt == TT.Equals:
