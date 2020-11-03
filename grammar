@@ -1,0 +1,48 @@
+# A rough Grammar for JACL
+# ------------------------
+
+# Document
+
+document     = obj_inner
+
+# Objects
+
+obj          = { obj_inner }
+obj_inner    = obj_stmt*
+obj_stmt     = val_or_key = rval
+             | val_or_key obj
+	     | val_or_key
+	     | obj
+
+# Tables
+
+table        = [ table_inner ]
+table_inner  = table_stmt*
+table_stmt   = val_or_key obj
+             | val_or_key
+	     | obj
+
+# Right Values
+
+rval         = val_or_key obj
+             | val_or_key
+	     | obj
+	     | table
+	     | literal
+
+val_or_key   = name
+             | tuple
+
+# Tuples
+
+tuple        = (tuple_item,+)
+tuple_item   = name 
+             | tuple
+	     | literal
+
+# Literals
+
+literal      = STRING
+             | INTEGER
+	     | FLOAT
+	     | BOOLEAN
