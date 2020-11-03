@@ -4,6 +4,72 @@
 
 It is intended to be more expressive than TOML, more minimal than YAML, and more readable than JSON.
 
+### Structures and Concepts
+
+The core data-structure behind JACL is the ordered hash table. This structure can be used in two forms, as a table (notated with square brackets) or as an object (notated with curly braces).
+
+A table can only store objects, as shown below:
+
+```
+my_table = [
+    {
+        desc = "An anonymous object, the first in the table"
+    }
+
+    wren {
+        desc = "An object with a key for convinient access"
+    }
+
+    # An object with just a key and no data
+    mallard
+
+    (swan, cygnet) {
+        desc = "Two objects defined with the same data"
+    }
+
+    mallard {
+        desc = "An object patched with additional data"
+    }
+]
+```
+
+An iteration through this table would yield first the anonymous object, then `wren`, then `mallard`, then `swan`, then `cygnet`.
+
+Objects are a strict superset of tables. They encapsulate an ordered hash table of objects, just as tables do. However, they also support bindings of properties to data, and can be marked with a tag that is unique within their immediate scope.
+
+```
+my_object = {
+    robin {
+        desc = "Just as with tables, objects can store objects"
+    }
+
+    best_bird = lapwing {
+        desc = "However, they can also map data to paramaters"
+    }
+
+    my_data = (100, false, (12.8, true, robin), "Basingstoke")
+
+    {
+        desc = "Object declarations and property bindings can coexist"
+    }
+}
+```
+
+The top-level of a JACL document is implicitly an object.
+
+It is important to note that the source of truth for an object is its declaration and thus its location in the ordered hash table of its containing scope (be that another object or a table). Bindings only truly hold keywise references to objects, not the objects themselves, and such objects are required to inhabit the same scope.
+
+The datatypes in JACL are:
+* String
+* Integer
+* Float
+* Boolean
+* Key
+* Tuple
+* Table
+* Object
+
+
 ### Example
 
 #### Config
