@@ -1,0 +1,67 @@
+# A rough Grammar for JACL
+# Revised for v.0.2
+# LL(2) I reckon... 
+# ------------------------
+
+# Document
+
+document      = obj_stmt*
+
+# Structures
+
+struct        = obj_struct
+              | table_struct
+	      | map_struct
+
+# Objects
+
+obj_struct    = '{' obj_stmt* '}'
+obj_stmt      = lval = rval
+              | key_select struct
+	      | key
+	      | struct
+
+# Tables
+# -> A subset of Objects
+# -> bare declarations only, enforced at parse-time
+
+
+table_struct  = '[' table_stmt* ']'
+table_stmt    = key_select struct
+              | key
+	      | struct
+
+# Maps
+# -> a subset of Objects
+# -> property bindings only, enforced at parse-time 
+
+map_struct    = '{%' map_stmt* '%}'
+map_stmt      = lval = rval
+
+# Keys
+
+key_select    = key ('+' key)*   # One or more keys
+	      | '*' expandable   # For all entities in a struct
+	      | prop             # Entity referred to by property
+
+expandable    = key              # Name is a scope
+              | prop             # Given property is a tuple of handles
+
+
+# Values
+
+lval          = NAME (',' NAME)+
+rval          = obj_struct
+              | table_struct
+	      | map_struct
+	      | val
+
+val           = key
+              | foreign_key
+    	      | prop
+	      | literal
+	      | '(' ( val ',' )+ ')'  # Tuples (cannot contain structures)
+
+prop          = '$' NAME   # Value referred to by a property
+foreign_key   = '@' NAME   # Key that is used arbritrarily at runtime
+key           = NAME       # Key that resolves to a structure in local scope at parse-time
