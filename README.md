@@ -1,5 +1,8 @@
 ## JACL - Jack's Application Config Language
 
+**This project is under heavy development. All documentation is likely out-of-date.**
+**The current focus is on the Rust implementation:** [jacl-rs](https://github.com/jgbyrne/jacl-rs/)
+
 `JACL` (pronounced Jackal) is an experimental new configuration language.
 
 It is intended to be more expressive than TOML, more minimal than YAML, and more readable than JSON.
